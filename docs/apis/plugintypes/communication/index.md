@@ -39,9 +39,6 @@ files which may be useful in your plugin.
 communication/provider/example
 ├── classes
 │   ├── communication_feature.php
-│   ├── example_room.php
-│   ├── example_user.php
-│   ├── example_form.php
 │   └── privacy
 │       └── provider.php
 ├── lang
@@ -80,111 +77,73 @@ TBA after implementing MDL-76796
 
 There are a number of key files within the plugin, described below.
 
-### example_room.php
+### communication_feature.php
 
-The example_room.php is the extended class of communication_room_base.php, and it will define the features for creating a room.
-The name of the class is not mandatory to follow like this, but it must extend communication_room_base and all the actions should
-go to the implemented methods of the class. Let's look at the methods of this class to get a better idea.
+Each plugin must implement this class and should have the exact class name. This part is important for the core communication api.
+The core communication api will pick the features and actions from this class. This class should implement the interfaces it supports.
 
-#### Communication object and init()
+```php
+class communication_feature implements
+    \core_communication\communication_provider,
+    \core_communication\user_provider,
+    \core_communication\room_chat_provider,
+    \core_communication\room_user_provider {
 
-This class will have the communication object from the base class and any other actions needed to be done as a part of initialization
-can be called from init() method. The communication object will have all the required information for the plugin room creation or
-any other management. That means plugins wont need to pass or get information any other way as all the required information will live
-in the communication object and plugins can easily call that object get to use those data.
+    // All the methods from interfaces should live here.
 
-#### create()
+}
+```
 
-All the necessary actions to create a provider room should be done here.
+## Interfaces
 
-#### update()
+### communication_provider
 
-All the necessary actions to update a provider room should live here. It is highly recommended to add necessary checking to compare the
-data passed and previous data to ensure something is changed and an update is required to make sure no unnecessary api calls are made.
+This is the base communication provider interface. This interface should be used to declare the support for the instantiation method for communication providers.
+Every provider plugin must implement this interface. This interface will have the following methods.
 
-#### delete()
+#### load_for_instance()
 
-!!Danger zone!! Any deletion or related action for the communication room should live here. Please be-careful with your actions here.
+This method will have the base communication processor object which will allow loading the communication provider for the communication api.
+
+### user_provider
+
+This is the base user provider interface. This interface should be used to declare the support for the for user provider creation and management.
+Every provider plugin must implement this interface if user creation is required. This interface will have the following methods.
+
+#### create_members()
+
+All the necessary actions to create members for the room should live here. Some APIs might not need to create user as they might have been created in a different way.
+
+### room_chat_provider
+
+This interface will define the features for creating a room. Let's look at the methods of this interface to get a better idea.
+
+#### create_or_update_chat_room()
+
+All the necessary actions to create/update a provider room should live here. It is highly recommended to add necessary checking to compare the
+data passed and previous data to ensure something is changed and an update is required to make sure no unnecessary api calls are made. A bool
+value should be returned to indicate if the room is created or updated or something went wrong.
+
+#### delete_chat_room()
+
+!!Danger zone!! Any deletion or related action for the communication room should live here. Please be-careful with your actions here. A bool
+value should be returned to indicate if the room is created or updated or something went wrong.
 
 #### generate_room_url()
 
 Generate a room url according to the room information, web client url or any other required information.
 
-### example_user.php
+### room_user_provider
 
-The example_room.php is the extended class of communication_user_base.php, and it will define the features for creating users,
-adding members to the room or removing members from the room. The name of the class is not mandatory to follow like this, but
-it must extend communication_user_base and all the actions should go to the implemented methods of the class. Let's look at the
-methods of this class to get a better idea.
-
-#### Communication object and init()
-
-As explained above, this class will also have the communication object and same way it can get all the required information. And
-any required call can live in the init.
-
-#### create_members()
-
-All the necessary actions to create members for the room should live here. It is not a required method to implemented, some APIs
-might not need to create user as they might have been created in a different way.
+This interface will define the features for adding members to the room or removing members from the room. Let's look at the methods of this class to get a better idea.
 
 #### add_members_to_room()
 
-All the necessary actions to add members to a room should live here.
+All the necessary actions to add members to a room should live here. The array of user ids must be passed here.
 
 #### remove_members_from_room()
 
-All the necessary actions to remove members from a room should live here.
-
-### example_form.php
-
-Communication plugins can add custom form elements as a part of the plugin. For example, while creating an instance or course, if
-the communication api is used there, it will generate the form fields to select the communication provider and name of the room to
-start with enabling a communication feature for a course or instance. Now, if the selected communication plugin requires or can have
-some more information to be added as a part of that feature, it can define those fields from the plugin and the communication api will
-pick them up and generate them in the form. For example, a communication room name is coming from the communication api, but a specific
-communication plugin required to have a description of the room, it can define that form field from the plugin and communication api
-will generate that while getting all the information from user at the same time while creating a communication feature. There are methods
-a plugin implement as a part of this. They are explained below.
-
-#### get_form_data_options()
-
-This will have list of options as an array which will be used while saving the data from the instance. For example, if there was two form
-fields implemented from the plugin, 'description' and 'room rules' these two values must be added as an array in this method to help the
-communication api understand which data to grab and send to the plugin for storing and other actions.
-
-#### set_form_data()
-
-This method will be used by instance form to set any data if there is an existing data and can be shown while editing a communication
-feature from a course or instance.
-
-#### set_form_definition()
-
-This method will have the actual form definition to be added as a part of the communication api from the selected communication plugin.
-
-### communication_feature.php
-
-Each plugin must implement/extend this class and should have the exact class name. This part is important for the core communication api.
-The core communication api will pick the features and actions from this class. This class should extend communication_feature_base.php
-and pass each feature as an object. For example, to pass the communication room, user and form feature as an object from the example plugin, it
-should do something like this:
-
-```php
-class communication_feature extends communication_feature_base {
-
-    public function get_provider_room(communication $communication): example_room {
-        return new example_room($communication);
-    }
-
-    public function get_provider_user(communication $communication): example_user {
-        return new example_user($communication);
-    }
-
-    public function get_provider_form_definition(): example_form {
-        return new example_form();
-    }
-
-}
-```
+All the necessary actions to remove members from a room should live here. The array of user ids must be passed here.
 
 :::info
 
