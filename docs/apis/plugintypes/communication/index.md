@@ -145,6 +145,32 @@ All the necessary actions to add members to a room should live here. The array o
 
 All the necessary actions to remove members from a room should live here. The array of user ids must be passed here.
 
+### provider_form
+
+Communication plugins can add custom form elements as a part of the plugin. For example, while creating an instance or course, if
+the communication api is used there, it will generate the form fields to select the communication provider and name of the room to
+start with enabling a communication feature for a course or instance. Now, if the selected communication plugin requires or can have
+some more information to be added as a part of that feature, it can define those fields from the plugin and the communication api will
+pick them up and generate them in the form. For example, a communication room name is coming from the communication api, but a specific
+communication plugin required to have a description of the room, this interface can define that form field from the plugin and communication api
+will generate that while getting all the information from user at the same time while creating a communication feature. There are methods
+a plugin can implement as a part of this interface. They are explained below.
+
+#### get_form_data_options()
+
+This will have list of options as an array which will be used while saving the data from the instance. For example, if there was two form
+fields implemented from the plugin, 'description' and 'room rules' these two values must be added as an array in this method to help the
+communication api understand which data to grab and send to the plugin for storing and other actions.
+
+#### set_form_data()
+
+This method will be used by instance form to set any data if there is an existing data and can be shown while editing a communication
+feature from a course or instance.
+
+#### set_form_definition()
+
+This method will have the actual form definition to be added as a part of the communication api from the selected communication plugin.
+
 :::info
 
 For a real plugin example, please look at the [Matrix plugin](https://github.com/moodle/moodle/tree/master/communication/provider/matrix).
