@@ -57,3 +57,70 @@ As part of this build, the validity of all internal links will be checked. For t
 immediately.
 
 You may also need to configure the build to view it locally. This can be achieved using a `.env` file in the project root. For more information on the format of the `.env` file, see the documentation in the `.env.default` file.
+
+### MCP server for AI agents
+
+After running `yarn build`, the docs corpus for the MCP (Model Context Protocol) server is generated in `build/mcp/` (by the `docusaurus-plugin-mcp-server` postBuild hook, used for artifact generation only). `mcpserver.mjs` is a self-contained server over that corpus with BM25 relevance ranking (OR semantics, prefix matching), one result per page across doc versions (newest preferred; a `version` argument selects another, `"all"` disables collapsing), and section-level fetching: append `#<anchor>` to a page URL (anchors are shown in search results) to retrieve one section instead of a whole page - large pages return a table of contents unless `full=true` is passed.
+
+Start the local MCP server:
+
+```
+node mcpserver.mjs
+```
+
+The server runs at `http://localhost:3001/mcp` (env `PORT` and `DOCS_DIR` override the defaults). Connect your AI agent using the instructions below.
+
+#### Claude Code
+
+```
+claude mcp add --transport http moodle-docs http://localhost:3001/mcp
+```
+
+#### GitHub Copilot (VS Code)
+
+Add to your `.vscode/mcp.json`, or create it if it doesn't exist:
+
+```json
+{
+  "servers": {
+    "moodle-docs": {
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+#### Cursor
+
+Add to `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project):
+
+```json
+{
+  "mcpServers": {
+    "moodle-docs": {
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+#### OpenCode
+
+Add to your `~/.config/opencode/config.json`:
+
+```json
+{
+  "mcp": {
+    "moodle-docs": {
+      "type": "http",
+      "url": "http://localhost:3001/mcp"
+    }
+  }
+}
+```
+
+#### Codex (OpenAI Codex CLI)
+
+```
+codex mcp add --name moodle-docs --url http://localhost:3001/mcp
+```

@@ -247,6 +247,7 @@ module.exports = {
                     '^@generated',
                     '^@site',
                     '^@testing-utils',
+                    '^docusaurus-plugin-mcp-server',
                 ],
             },
         ],
