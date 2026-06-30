@@ -1,0 +1,130 @@
+# Publishes the MCP artifacts as GitHub Release assets every night, so
+# moodle-dev setups download them instead of building (public downloads,
+# no token on the developer's side).
+#
+# How it stays current without touching git history: it checks out
+# UPSTREAM (moodle/devdocs) fresh, lays this branch's MCP files on top
+# (.github/mcp/build.sh) and builds that. Nothing is rebased and nothing
+# is pushed to a branch, so the two things that broke the previous
+# rebase-based sync cannot happen: no merge conflicts with upstream's
+# dependency bumps, and no bot push of upstream commits that modify
+# workflow files (which GitHub refuses for the built-in token). The
+# built-in token only creates releases in this repository.
+#
+# Must live on the fork's DEFAULT branch (mcp): scheduled workflows only
+# run from there. This branch may fall behind upstream; that is fine,
+# only its MCP files are used.
+name: Publish MCP artifacts
+
+on:
+  schedule:
+    - cron: '17 3 * * *' # daily, 03:17 UTC (GitHub may start it hours late)
+  push:
+    branches: [mcp] # a change to the MCP files publishes at once
+  workflow_dispatch:
+
+permissions:
+  contents: write # create and delete releases in this repository
+  actions: write # the keepalive step below
+
+concurrency:
+  group: publish-mcp
+  cancel-in-progress: false
+
+env:
+  UPSTREAM_REPO: moodle/devdocs
+  KEEP_DATED_RELEASES: 10
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the MCP files (this branch)
+        uses: actions/checkout@v4
+        with:
+          path: overlay
+
+      - name: Check out upstream
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.UPSTREAM_REPO }}
+          ref: main
+          path: upstream
+
+      - name: Decide whether there is anything new to build
+        id: source
+        # source.json records what a release was built from. A scheduled
+        # run with the same upstream and overlay commits as mcp-latest is
+        # a no-op: rebuilding would only change timestamps, and every
+        # setup would then re-download identical content.
+        run: |
+          set -euo pipefail
+          printf '{"upstream":"%s","overlay":"%s"}\n' \
+            "$(git -C upstream rev-parse HEAD)" \
+            "$(git -C overlay rev-parse HEAD)" > source.json
+          cat source.json
+          PREVIOUS=$(curl -fsSL "https://github.com/$GITHUB_REPOSITORY/releases/download/mcp-latest/source.json" || true)
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ] && [ "$PREVIOUS" = "$(cat source.json)" ]; then
+            echo "Nothing changed since mcp-latest - skipping the build."
+            echo "build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "build=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.source.outputs.build == 'true'
+        with:
+          node-version-file: upstream/.nvmrc
+
+      - name: Enable corepack (upstream pins its Yarn version)
+        if: steps.source.outputs.build == 'true'
+        run: corepack enable
+
+      - name: Build the artifacts (upstream + MCP files)
+        if: steps.source.outputs.build == 'true'
+        run: overlay/.github/mcp/build.sh upstream dist-mcp
+
+      - name: Publish the dated release and move mcp-latest
+        if: steps.source.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # `gh release create` uploads into a draft and publishes at the
+        # end, so consumers never see a half-uploaded release. mcp-latest
+        # is deleted and recreated; a download that lands in the gap gets
+        # a 404 and moodle-dev keeps serving what it already has.
+        run: |
+          set -euo pipefail
+          cp source.json dist-mcp/source.json
+          DATE_TAG="mcp-$(date -u +%Y%m%d-%H%M)"
+          UPSTREAM_SHA=$(git -C upstream rev-parse --short HEAD)
+          NOTES="docs.json.gz, manifest.json, bundled mcpserver.mjs, nextVersion.js, versions.json, SHA256SUMS. Built from $UPSTREAM_REPO@$UPSTREAM_SHA plus the MCP files at $GITHUB_SHA."
+          gh release create "$DATE_TAG" dist-mcp/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "MCP artifacts $DATE_TAG" --notes "$NOTES"
+          gh release delete mcp-latest --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag 2>/dev/null || true
+          gh release create mcp-latest dist-mcp/* \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "MCP artifacts (latest)" \
+            --notes "Rolling pointer to the newest build ($DATE_TAG). Pin a dated tag for a frozen copy. $NOTES"
+
+      - name: Prune old dated releases
+        if: steps.source.outputs.build == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release list --repo "$GITHUB_REPOSITORY" --limit 200 --json tagName,createdAt \
+            --jq '[.[] | select(.tagName | test("^mcp-[0-9]{8}-[0-9]{4}$"))] | sort_by(.createdAt) | reverse | .[env.KEEP_DATED_RELEASES | tonumber:] | .[].tagName' \
+            | while read -r TAG; do
+                echo "pruning $TAG"
+                gh release delete "$TAG" --repo "$GITHUB_REPOSITORY" --yes --cleanup-tag
+              done
+
+      - name: Keep the schedule alive
+        # GitHub disables scheduled workflows in a repository with no
+        # activity for 60 days, and a quiet upstream means skipped builds.
+        # Re-enabling an enabled workflow resets that clock.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/publish-mcp.yml/enable"
