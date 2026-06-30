@@ -238,6 +238,20 @@ const config = {
                 ],
             },
         ],
+        [
+            'docusaurus-plugin-mcp-server',
+            {
+                server: {
+                    name: 'my-docs',
+                    version: '1.0.0',
+                },
+                flexsearch: {
+                    tokenize: 'strict',
+                    resolution: 3,
+                    context: false,
+                },
+            },
+        ],
     ],
 };
 

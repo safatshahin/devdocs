@@ -1,0 +1,77 @@
+# Builds the MCP docs corpus from this branch and publishes it as GitHub
+# Release assets, so moodle-dev setups download artifacts instead of
+# building the docs site (no yarn/corepack/node@22 on developer machines).
+#
+# Lives in the mcp commit (rides the rebase) because push-triggered
+# workflows run from the workflow file at the pushed commit.
+name: Publish MCP artifacts
+
+on:
+  push:
+    branches: [mcp]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-mcp
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: mcp
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+          cache: yarn
+
+      - name: Install dependencies
+        run: yarn install --immutable
+
+      - name: Build docs (generates build/mcp/docs.json)
+        run: yarn build
+
+      - name: Bundle the MCP server into a single file
+        # The server's only dependency is @modelcontextprotocol/sdk; bundling
+        # it in means consumers run `node mcpserver.mjs` with no node_modules.
+        run: |
+          npx --yes esbuild@0.24.2 mcpserver.mjs \
+            --bundle --platform=node --format=esm --target=node18 \
+            --outfile=dist-mcp/mcpserver.mjs
+
+      - name: Assemble release assets
+        run: |
+          set -euo pipefail
+          test -s build/mcp/docs.json
+          gzip -9 -c build/mcp/docs.json > dist-mcp/docs.json.gz
+          cp build/mcp/manifest.json dist-mcp/manifest.json
+          cd dist-mcp
+          sha256sum docs.json.gz manifest.json mcpserver.mjs > SHA256SUMS
+          ls -la
+          echo "DATE_TAG=mcp-$(date -u +%Y%m%d-%H%M)" >> "$GITHUB_ENV"
+          echo "DOC_COUNT=$(python3 -c "import json;print(json.load(open('manifest.json'))['docCount'])")" >> "$GITHUB_ENV"
+
+      - name: Publish dated release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$DATE_TAG" dist-mcp/* \
+            --target "$GITHUB_SHA" \
+            --title "MCP artifacts $DATE_TAG" \
+            --notes "docs.json.gz (${DOC_COUNT} pages), bundled mcpserver.mjs, SHA256SUMS. Built from $GITHUB_SHA."
+
+      - name: Move the rolling mcp-latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete mcp-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create mcp-latest dist-mcp/* \
+            --target "$GITHUB_SHA" \
+            --title "MCP artifacts (latest)" \
+            --notes "Rolling pointer to the newest build ($DATE_TAG). Pin a dated tag for reproducible setups."
