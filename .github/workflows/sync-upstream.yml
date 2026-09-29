@@ -1,0 +1,102 @@
+# Keeps this fork current: rebases main onto upstream moodle/devdocs
+# and rebases the mcp branch (one commit on top of main) so its published
+# MCP artifacts always reflect the latest docs.
+#
+# Must live on the default branch (main): scheduled workflows only run
+# from there. main carries exactly one fork-owned commit (this
+# workflow) and is rebased onto upstream; mcp is force-pushed with a
+# lease only when its rebase is clean or the
+# sole conflict is yarn.lock (regenerated mechanically).
+name: Sync fork with upstream
+
+on:
+  schedule:
+    - cron: '17 3 * * *'   # daily, 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ github.token }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git remote add upstream https://github.com/moodle/devdocs.git
+          git fetch upstream main
+          git fetch origin mcp
+
+      - name: Rebase main onto upstream
+        # This fork's main is upstream main plus this workflow's own commit,
+        # so a fast-forward is impossible once upstream moves. The
+        # fork-owned commit is rebased onto upstream instead and main is
+        # force-pushed with a lease; upstream never touches this file, so
+        # the rebase cannot conflict.
+        run: |
+          set -euo pipefail
+          BEFORE=$(git rev-parse HEAD)
+          git rebase upstream/main
+          AFTER=$(git rev-parse HEAD)
+          if [ "$BEFORE" != "$AFTER" ]; then
+            git push --force-with-lease origin main
+            echo "main: $BEFORE -> $AFTER"
+          else
+            echo "main already up to date"
+          fi
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+
+      - name: Rebase mcp onto main
+        run: |
+          set -euo pipefail
+          git checkout -B mcp origin/mcp
+          if git merge-base --is-ancestor main mcp; then
+            echo "mcp already on top of main"; exit 0
+          fi
+          if git rebase main; then
+            echo "clean rebase"
+          else
+            CONFLICTS=$(git diff --name-only --diff-filter=U)
+            echo "conflicts: $CONFLICTS"
+            if [ "$CONFLICTS" = "yarn.lock" ]; then
+              # Lockfile-only conflict: take upstream's lockfile and let yarn
+              # fold the MCP dependencies back in (the same manual fix the
+              # branch has needed before).
+              git checkout main -- yarn.lock
+              corepack enable
+              yarn install
+              git add yarn.lock
+              GIT_EDITOR=true git rebase --continue
+            else
+              git rebase --abort
+              echo "::error::mcp rebase conflicts outside yarn.lock: $CONFLICTS - resolve manually"
+              exit 1
+            fi
+          fi
+          git push --force-with-lease origin mcp
+          echo "MCP_PUSHED=1" >> "$GITHUB_ENV"
+
+      - name: Trigger the MCP artifact publish
+        # Pushes made with GITHUB_TOKEN never fire other workflows (GitHub's
+        # recursion guard), so the rebased mcp branch is published by an
+        # explicit dispatch instead of relying on the push trigger.
+        if: env.MCP_PUSHED == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run publish-mcp.yml --ref mcp
